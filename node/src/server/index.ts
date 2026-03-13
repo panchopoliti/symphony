@@ -5,11 +5,13 @@
 import http from 'node:http';
 import express from 'express';
 import type { Orchestrator } from '../orchestrator.js';
+import type { ActivityLogStore } from '../activity-log.js';
 import { createRoutes } from './routes.js';
 
 export async function startServer(
   port: number,
   orchestrator: Orchestrator,
+  activityLog?: ActivityLogStore,
 ): Promise<http.Server> {
   const app = express();
 
@@ -17,7 +19,7 @@ export async function startServer(
   app.use(express.json());
 
   // Mount routes
-  app.use(createRoutes(orchestrator));
+  app.use(createRoutes(orchestrator, activityLog));
 
   // 405 for unsupported methods on known paths
   app.all('/api/v1/state', (_req, res) => {

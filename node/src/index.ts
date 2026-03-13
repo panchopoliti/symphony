@@ -7,6 +7,8 @@ import { parseConfig, validateConfig } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { AsanaTracker } from './tracker/asana.js';
 import { ClaudeAgent } from './agent/claude.js';
+import { ClaudeCodeCliAgent } from './agent/claude-cli.js';
+import { ActivityLogStore } from './activity-log.js';
 import { Orchestrator } from './orchestrator.js';
 import { startServer } from './server/index.js';
 
@@ -52,6 +54,7 @@ export async function startSymphony(opts: StartOptions): Promise<SymphonyInstanc
       pollIntervalMs: config.polling.intervalMs,
       maxConcurrentAgents: config.agent.maxConcurrentAgents,
       model: config.claude.model,
+      provider: config.claude.provider,
     },
     'Config summary',
   );
@@ -66,7 +69,10 @@ export async function startSymphony(opts: StartOptions): Promise<SymphonyInstanc
   });
 
   // 5. Create agent
-  const agent = new ClaudeAgent({ model: config.claude.model });
+  const activityLog = new ActivityLogStore();
+  const agent = config.claude.provider === 'api'
+    ? new ClaudeAgent({ model: config.claude.model, activityLog })
+    : new ClaudeCodeCliAgent({ model: config.claude.model, activityLog });
 
   // 6. Create orchestrator
   const orchestrator = new Orchestrator({
@@ -105,7 +111,7 @@ export async function startSymphony(opts: StartOptions): Promise<SymphonyInstanc
   let httpServer: import('node:http').Server | null = null;
   const effectivePort = config.server.port;
   if (effectivePort !== null) {
-    httpServer = await startServer(effectivePort, orchestrator);
+    httpServer = await startServer(effectivePort, orchestrator, activityLog);
     logger.info({ port: effectivePort }, 'HTTP server listening on 127.0.0.1');
   }
 
