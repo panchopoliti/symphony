@@ -4,6 +4,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import type { Orchestrator } from '../orchestrator.js';
+import type { ActivityLogStore } from '../activity-log.js';
 
 // ---------------------------------------------------------------------------
 // JSON serializer — handles Date → ISO string, strips non-serializable fields
@@ -63,6 +64,7 @@ function renderDashboard(snapshot: ReturnType<Orchestrator['getSnapshot']>): str
           <td>${r.totalTokens.toLocaleString()}</td>
           <td>${r.lastEvent ?? '-'}</td>
           <td>${r.startedAt.toISOString()}</td>
+          <td><a href="/log/${esc(r.identifier)}">View Log</a></td>
         </tr>`,
     )
     .join('\n');
@@ -119,7 +121,7 @@ function renderDashboard(snapshot: ReturnType<Orchestrator['getSnapshot']>): str
     snapshot.running.length === 0
       ? '<p class="empty">No running sessions</p>'
       : `<table>
-    <thead><tr><th>Identifier</th><th>Title</th><th>State</th><th>Turns</th><th>Tokens</th><th>Last Event</th><th>Started</th></tr></thead>
+    <thead><tr><th>Identifier</th><th>Title</th><th>State</th><th>Turns</th><th>Tokens</th><th>Last Event</th><th>Started</th><th>Log</th></tr></thead>
     <tbody>${runningRows}</tbody>
   </table>`
   }
@@ -146,10 +148,77 @@ function esc(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Log Viewer HTML
+// ---------------------------------------------------------------------------
+
+function renderLogViewer(identifier: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Log - ${esc(identifier)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; margin: 2rem; background: #1a1a2e; color: #e0e0e0; }
+    h1 { color: #fff; margin-bottom: 0.25rem; }
+    .back { color: #64b5f6; margin-bottom: 1rem; display: inline-block; }
+    #log { max-height: 80vh; overflow-y: auto; padding: 1rem; background: #16213e; border-radius: 8px; }
+    .entry { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; border-left: 3px solid #333; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+    .entry .ts { color: #666; font-size: 0.75rem; }
+    .entry .tag { font-weight: 600; margin-right: 0.5rem; }
+    .entry.text { border-color: #888; }
+    .entry.text .tag { color: #ccc; }
+    .entry.reasoning { border-color: #9e9e9e; font-style: italic; color: #aaa; }
+    .entry.reasoning .tag { color: #9e9e9e; }
+    .entry.tool_call { border-color: #42a5f5; }
+    .entry.tool_call .tag { color: #42a5f5; }
+    .entry.tool_result { border-color: #66bb6a; }
+    .entry.tool_result .tag { color: #66bb6a; }
+    .entry.error { border-color: #ef5350; }
+    .entry.error .tag { color: #ef5350; }
+    .empty { color: #666; font-style: italic; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Dashboard</a>
+  <h1>Activity Log: ${esc(identifier)}</h1>
+  <div id="log"><p class="empty">Loading...</p></div>
+  <script>
+    async function refresh() {
+      try {
+        const res = await fetch('/api/v1/${esc(identifier)}/log');
+        const entries = await res.json();
+        const el = document.getElementById('log');
+        if (entries.length === 0) {
+          el.innerHTML = '<p class="empty">No log entries yet</p>';
+          return;
+        }
+        el.innerHTML = entries.map(e =>
+          '<div class="entry ' + e.type + '">' +
+            '<span class="ts">' + new Date(e.timestamp).toLocaleTimeString() + '</span> ' +
+            '<span class="tag">[' + e.type.toUpperCase() + ']</span>' +
+            escHtml(e.content) +
+          '</div>'
+        ).join('');
+        el.scrollTop = el.scrollHeight;
+      } catch (err) {
+        console.error('Log refresh failed:', err);
+      }
+    }
+    function escHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>`;
+}
+
+// ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
-export function createRoutes(orchestrator: Orchestrator): Router {
+export function createRoutes(orchestrator: Orchestrator, activityLog?: ActivityLogStore): Router {
   const router = Router();
 
   // GET / — HTML dashboard
@@ -170,10 +239,31 @@ export function createRoutes(orchestrator: Orchestrator): Router {
     res.status(202).json({ queued: true });
   });
 
+  // GET /log/:identifier — HTML log viewer
+  router.get('/log/:identifier', (req: Request, res: Response) => {
+    const identifier = req.params.identifier as string;
+    res.type('html').send(renderLogViewer(identifier));
+  });
+
+  // GET /api/v1/:identifier/log — activity log JSON
+  router.get('/api/v1/:identifier/log', (req: Request, res: Response) => {
+    const identifier = req.params.identifier as string;
+    if (!activityLog) {
+      res.json([]);
+      return;
+    }
+    const entries = activityLog.getLog(identifier).map((e) => ({
+      timestamp: e.timestamp.toISOString(),
+      type: e.type,
+      content: e.content,
+    }));
+    res.json(entries);
+  });
+
   // GET /api/v1/:identifier — issue-specific details
   const reservedPaths = new Set(['state', 'refresh']);
   router.get('/api/v1/:identifier', (req: Request, res: Response) => {
-    const { identifier } = req.params;
+    const identifier = req.params.identifier as string;
 
     if (reservedPaths.has(identifier)) {
       res.status(405).json({ error: { code: 'method_not_allowed', message: `Use ${identifier === 'state' ? 'GET' : 'POST'} for /api/v1/${identifier}` } });

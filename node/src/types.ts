@@ -73,6 +73,7 @@ export interface AgentConfig {
 
 export interface ClaudeConfig {
   model: string;
+  provider: 'cli' | 'api';
 }
 
 export interface ServerConfig {

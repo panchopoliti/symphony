@@ -13,7 +13,7 @@ export type Logger = pino.Logger;
  */
 export function createLogger(opts?: { logsRoot?: string }): Logger {
   const targets: pino.TransportTargetOptions[] = [
-    { target: 'pino/file', options: { destination: 1 }, level: 'info' },
+    { target: 'pino-pretty', options: { destination: 1, colorize: true }, level: 'info' },
   ];
 
   if (opts?.logsRoot) {

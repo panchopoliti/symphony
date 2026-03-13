@@ -57,7 +57,7 @@ function makeConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
       maxRetryBackoffMs: 300000,
       maxConcurrentAgentsByState: {},
     },
-    claude: { model: 'claude-sonnet-4-20250514' },
+    claude: { model: 'claude-sonnet-4-20250514', provider: 'cli' },
     server: { port: null },
     ...overrides,
   };

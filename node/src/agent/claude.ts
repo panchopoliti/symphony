@@ -6,9 +6,10 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { execFile } from 'node:child_process';
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentAdapter, AgentEvent, ServiceConfig, TurnResult } from '../types.js';
+import type { ActivityLogStore } from '../activity-log.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -127,9 +128,11 @@ function createTools(workspacePath: string) {
 
 export class ClaudeAgent implements AgentAdapter {
   private model: string;
+  private activityLog: ActivityLogStore | null;
 
-  constructor(opts?: { model?: string }) {
+  constructor(opts?: { model?: string; activityLog?: ActivityLogStore }) {
     this.model = opts?.model ?? 'claude-sonnet-4-20250514';
+    this.activityLog = opts?.activityLog ?? null;
   }
 
   async runTurn(opts: {
@@ -155,6 +158,8 @@ export class ClaudeAgent implements AgentAdapter {
       const tools = createTools(workspacePath);
       const systemPrompt = buildSystemPrompt(workspacePath);
 
+      const identifier = basename(workspacePath);
+
       const result = await generateText({
         model: anthropic(this.model),
         system: systemPrompt,
@@ -163,6 +168,29 @@ export class ClaudeAgent implements AgentAdapter {
         maxSteps: 50,
         abortSignal: signal,
       });
+
+      // Log steps to activity log
+      if (this.activityLog) {
+        for (const step of result.steps) {
+          if (step.text) {
+            this.activityLog.append(identifier, { timestamp: new Date(), type: 'text', content: step.text });
+          }
+          for (const tc of step.toolCalls) {
+            this.activityLog.append(identifier, {
+              timestamp: new Date(),
+              type: 'tool_call',
+              content: `${tc.toolName}: ${JSON.stringify(tc.args, null, 2)}`,
+            });
+          }
+          for (const tr of step.toolResults) {
+            this.activityLog.append(identifier, {
+              timestamp: new Date(),
+              type: 'tool_result',
+              content: typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result),
+            });
+          }
+        }
+      }
 
       const usage = {
         inputTokens: result.usage.promptTokens,

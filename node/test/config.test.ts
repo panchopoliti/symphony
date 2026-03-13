@@ -75,6 +75,7 @@ describe('parseConfig', () => {
       expect(config.agent.maxRetryBackoffMs).toBe(300000);
       expect(config.agent.maxConcurrentAgentsByState).toEqual({});
       expect(config.claude.model).toBe('claude-sonnet-4-20250514');
+      expect(config.claude.provider).toBe('cli');
       expect(config.server.port).toBeNull();
     });
 
@@ -95,6 +96,28 @@ describe('parseConfig', () => {
       expect(config.agent.maxRetryBackoffMs).toBe(120000);
       expect(config.claude.model).toBe('claude-sonnet-4-20250514');
       expect(config.server.port).toBe(4000);
+    });
+  });
+
+  describe('claude.provider', () => {
+    it('defaults to cli when not specified', () => {
+      const config = parseConfig({});
+      expect(config.claude.provider).toBe('cli');
+    });
+
+    it('returns api when explicitly set to api', () => {
+      const config = parseConfig({ claude: { provider: 'api' } });
+      expect(config.claude.provider).toBe('api');
+    });
+
+    it('returns cli when explicitly set to cli', () => {
+      const config = parseConfig({ claude: { provider: 'cli' } });
+      expect(config.claude.provider).toBe('cli');
+    });
+
+    it('defaults to cli for invalid provider value', () => {
+      const config = parseConfig({ claude: { provider: 'invalid' } });
+      expect(config.claude.provider).toBe('cli');
     });
   });
 

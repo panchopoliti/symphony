@@ -22,6 +22,7 @@ agent:
   max_turns: 20
 claude:
   model: claude-sonnet-4-20250514
+  provider: cli
 server:
   port: 4000
 ---

@@ -124,6 +124,7 @@ export function parseConfig(raw: Record<string, unknown>): ServiceConfig {
     },
     claude: {
       model: typeof claude.model === 'string' ? claude.model : 'claude-sonnet-4-20250514',
+      provider: claude.provider === 'api' ? 'api' : 'cli',
     },
     server: {
       port: server.port !== undefined && server.port !== null ? toInt(server.port, 0) : null,
