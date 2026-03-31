@@ -148,7 +148,7 @@ function esc(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Log Viewer HTML
+// Log Viewer HTML — Conversation-style UI (Claude Desktop / Conductor inspired)
 // ---------------------------------------------------------------------------
 
 function renderLogViewer(identifier: string): string {
@@ -158,57 +158,539 @@ function renderLogViewer(identifier: string): string {
   <meta charset="utf-8">
   <title>Log - ${esc(identifier)}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; margin: 2rem; background: #1a1a2e; color: #e0e0e0; }
-    h1 { color: #fff; margin-bottom: 0.25rem; }
-    .back { color: #64b5f6; margin-bottom: 1rem; display: inline-block; }
-    #log { max-height: 80vh; overflow-y: auto; padding: 1rem; background: #16213e; border-radius: 8px; }
-    .entry { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; border-left: 3px solid #333; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
-    .entry .ts { color: #666; font-size: 0.75rem; }
-    .entry .tag { font-weight: 600; margin-right: 0.5rem; }
-    .entry.text { border-color: #888; }
-    .entry.text .tag { color: #ccc; }
-    .entry.reasoning { border-color: #9e9e9e; font-style: italic; color: #aaa; }
-    .entry.reasoning .tag { color: #9e9e9e; }
-    .entry.tool_call { border-color: #42a5f5; }
-    .entry.tool_call .tag { color: #42a5f5; }
-    .entry.tool_result { border-color: #66bb6a; }
-    .entry.tool_result .tag { color: #66bb6a; }
-    .entry.error { border-color: #ef5350; }
-    .entry.error .tag { color: #ef5350; }
-    .empty { color: #666; font-style: italic; }
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #1a1a1a;
+      color: #e8e8e8;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .header {
+      padding: 12px 20px;
+      background: #242424;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .header .back {
+      color: #888;
+      text-decoration: none;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: color 0.15s;
+    }
+    .header .back:hover { color: #ccc; }
+    .header .back svg { width: 16px; height: 16px; }
+    .header .title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+    .header .status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #888;
+    }
+    .header .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #4caf50;
+      animation: pulse 2s infinite;
+    }
+    .header .status-dot.disconnected { background: #666; animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Conversation area ──────────────────────────────────── */
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 0;
+      scroll-behavior: smooth;
+    }
+    #log::-webkit-scrollbar { width: 6px; }
+    #log::-webkit-scrollbar-track { background: transparent; }
+    #log::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+    #log::-webkit-scrollbar-thumb:hover { background: #555; }
+
+    .conversation {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: #555;
+      padding: 60px 20px;
+      font-size: 14px;
+    }
+    .empty-state .spinner {
+      width: 24px; height: 24px;
+      border: 2px solid #333;
+      border-top-color: #888;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Agent message ──────────────────────────────────────── */
+    .msg {
+      margin-bottom: 2px;
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-text {
+      padding: 10px 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #e0e0e0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg-text code {
+      background: #2a2a2a;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      color: #c9d1d9;
+    }
+
+    /* ── Thinking/Reasoning block ───────────────────────────── */
+    .thinking {
+      margin: 8px 0;
+    }
+    .thinking-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 0;
+      cursor: pointer;
+      user-select: none;
+      color: #888;
+      font-size: 12px;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+    .thinking-toggle:hover { color: #aaa; }
+    .thinking-toggle svg {
+      width: 12px; height: 12px;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .thinking.open .thinking-toggle svg { transform: rotate(90deg); }
+    .thinking-content {
+      display: none;
+      padding: 8px 12px;
+      margin: 2px 0 8px;
+      background: #222;
+      border-radius: 6px;
+      border-left: 2px solid #444;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #999;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .thinking.open .thinking-content { display: block; }
+
+    /* ── Tool call group ────────────────────────────────────── */
+    .tool-group {
+      margin: 6px 0;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #1e1e1e;
+    }
+    .tool-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+      color: #e0e0e0;
+      transition: background 0.1s;
+    }
+    .tool-header:hover { background: #252525; }
+    .tool-header svg {
+      width: 14px; height: 14px;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+      color: #888;
+    }
+    .tool-group.open .tool-header svg { transform: rotate(90deg); }
+    .tool-icon {
+      width: 22px; height: 22px;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      flex-shrink: 0;
+      font-weight: 700;
+      color: #fff;
+    }
+    .tool-icon.bash { background: #3b82f6; }
+    .tool-icon.read, .tool-icon.glob, .tool-icon.grep { background: #8b5cf6; }
+    .tool-icon.write, .tool-icon.edit { background: #f59e0b; }
+    .tool-icon.default { background: #6b7280; }
+    .tool-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #ccc;
+    }
+    .tool-summary {
+      font-size: 12px;
+      color: #666;
+      margin-left: auto;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 300px;
+    }
+    .tool-body {
+      display: none;
+      border-top: 1px solid #2a2a2a;
+    }
+    .tool-group.open .tool-body { display: block; }
+    .tool-section {
+      padding: 10px 12px;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.5;
+      color: #b0b0b0;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .tool-section::-webkit-scrollbar { width: 4px; }
+    .tool-section::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+    .tool-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #555;
+      padding: 6px 12px 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .tool-section.result {
+      background: #1a1f1a;
+      border-top: 1px solid #2a2a2a;
+    }
+
+    /* ── Error block ────────────────────────────────────────── */
+    .msg-error {
+      margin: 8px 0;
+      padding: 10px 12px;
+      background: #2a1a1a;
+      border: 1px solid #5c2020;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #f87171;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      line-height: 1.5;
+    }
+    .msg-error::before {
+      content: '';
+      display: inline-block;
+      width: 14px; height: 14px;
+      margin-right: 6px;
+      vertical-align: -2px;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23f87171'%3E%3Cpath d='M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3a.75.75 0 01-1.5 0V5zm.75 6.25a.75.75 0 100-1.5.75.75 0 000 1.5z'/%3E%3C/svg%3E") no-repeat center/contain;
+    }
+
+    /* ── Scroll-to-bottom button ────────────────────────────── */
+    .scroll-btn {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      border: 1px solid #444;
+      color: #ccc;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      gap: 4px;
+      transition: background 0.15s;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .scroll-btn:hover { background: #444; }
+    .scroll-btn svg { width: 12px; height: 12px; }
+    .scroll-btn.visible { display: flex; }
+
+    /* ── Timestamp separator ────────────────────────────────── */
+    .ts-sep {
+      text-align: center;
+      margin: 16px 0;
+      font-size: 11px;
+      color: #555;
+    }
   </style>
 </head>
 <body>
-  <a class="back" href="/">&larr; Dashboard</a>
-  <h1>Activity Log: ${esc(identifier)}</h1>
-  <div id="log"><p class="empty">Loading...</p></div>
+  <div class="header">
+    <a class="back" href="/">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
+      Dashboard
+    </a>
+    <div class="title">${esc(identifier)}</div>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connected</span>
+    </div>
+  </div>
+
+  <div id="log">
+    <div class="conversation" id="conv">
+      <div class="empty-state"><div class="spinner"></div>Waiting for activity...</div>
+    </div>
+  </div>
+
+  <button class="scroll-btn" id="scrollBtn" onclick="scrollToBottom()">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 11.5a.75.75 0 01-.53-.22l-3.25-3.25a.75.75 0 111.06-1.06L8 9.69l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-.53.22z"/></svg>
+    New activity
+  </button>
+
   <script>
+    const CHEVRON = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M6.22 4.22a.75.75 0 011.06 0l3.25 3.25a.75.75 0 010 1.06l-3.25 3.25a.75.75 0 01-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 010-1.06z"/></svg>';
+    const IDENTIFIER = '${esc(identifier)}';
+    let prevCount = 0;
+    let userScrolled = false;
+
+    // Scroll tracking
+    const logEl = document.getElementById('log');
+    const scrollBtn = document.getElementById('scrollBtn');
+
+    logEl.addEventListener('scroll', () => {
+      const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 60;
+      userScrolled = !atBottom;
+      scrollBtn.classList.toggle('visible', userScrolled);
+    });
+
+    function scrollToBottom() {
+      logEl.scrollTop = logEl.scrollHeight;
+      userScrolled = false;
+      scrollBtn.classList.remove('visible');
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function relTime(ts) {
+      const d = new Date(ts);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    // Parse tool name from "toolName: {json}" format
+    function parseToolCall(content) {
+      const colonIdx = content.indexOf(':');
+      if (colonIdx === -1) return { name: content.trim(), args: '' };
+      return {
+        name: content.substring(0, colonIdx).trim(),
+        args: content.substring(colonIdx + 1).trim(),
+      };
+    }
+
+    // Get a one-line summary for the tool
+    function toolSummary(name, args) {
+      try {
+        const parsed = JSON.parse(args);
+        if (name === 'Bash' || name === 'bash') return parsed.command ? truncate(parsed.command, 50) : '';
+        if (name === 'Read' || name === 'read') return parsed.file_path ? truncate(parsed.file_path, 50) : '';
+        if (name === 'Write' || name === 'write') return parsed.file_path ? truncate(parsed.file_path, 50) : '';
+        if (name === 'Edit' || name === 'edit') return parsed.file_path ? truncate(parsed.file_path, 50) : '';
+        if (name === 'Glob' || name === 'glob') return parsed.pattern ? truncate(parsed.pattern, 50) : '';
+        if (name === 'Grep' || name === 'grep') return parsed.pattern ? truncate(parsed.pattern, 50) : '';
+        return '';
+      } catch { return ''; }
+    }
+
+    function truncate(s, n) {
+      return s.length > n ? s.substring(0, n) + '...' : s;
+    }
+
+    function toolIconClass(name) {
+      const n = name.toLowerCase();
+      if (n === 'bash') return 'bash';
+      if (n === 'read' || n === 'glob' || n === 'grep') return 'read';
+      if (n === 'write' || n === 'edit') return 'write';
+      return 'default';
+    }
+
+    function toolIconLetter(name) {
+      const n = name.toLowerCase();
+      if (n === 'bash') return '>';
+      if (n === 'read') return 'R';
+      if (n === 'glob') return 'G';
+      if (n === 'grep') return 'S';
+      if (n === 'write') return 'W';
+      if (n === 'edit') return 'E';
+      return name.charAt(0).toUpperCase();
+    }
+
+    // Group entries into renderable blocks
+    function groupEntries(entries) {
+      const groups = [];
+      let i = 0;
+      while (i < entries.length) {
+        const e = entries[i];
+        if (e.type === 'tool_call') {
+          // Look ahead for a matching tool_result
+          const group = { type: 'tool', call: e, result: null };
+          if (i + 1 < entries.length && entries[i + 1].type === 'tool_result') {
+            group.result = entries[i + 1];
+            i += 2;
+          } else {
+            i++;
+          }
+          groups.push(group);
+        } else {
+          groups.push({ type: e.type, entry: e });
+          i++;
+        }
+      }
+      return groups;
+    }
+
+    function renderGroups(groups) {
+      let html = '';
+      for (const g of groups) {
+        if (g.type === 'text') {
+          html += '<div class="msg"><div class="msg-text">' + formatText(escHtml(g.entry.content)) + '</div></div>';
+        } else if (g.type === 'reasoning') {
+          html += renderThinking(g.entry);
+        } else if (g.type === 'tool') {
+          html += renderToolGroup(g);
+        } else if (g.type === 'error') {
+          html += '<div class="msg"><div class="msg-error">' + escHtml(g.entry.content) + '</div></div>';
+        }
+      }
+      return html;
+    }
+
+    function formatText(escaped) {
+      // Basic inline code formatting
+      return escaped.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+    }
+
+    function renderThinking(entry) {
+      const preview = truncate(entry.content, 60);
+      return '<div class="thinking">' +
+        '<button class="thinking-toggle" onclick="this.parentElement.classList.toggle(\\\'open\\\')">' +
+          CHEVRON +
+          '<span>Thinking...</span>' +
+        '</button>' +
+        '<div class="thinking-content">' + escHtml(entry.content) + '</div>' +
+      '</div>';
+    }
+
+    function renderToolGroup(g) {
+      const tc = parseToolCall(g.call.content);
+      const summary = toolSummary(tc.name, tc.args);
+      const iconCls = toolIconClass(tc.name);
+      const iconLetter = toolIconLetter(tc.name);
+
+      let bodyHtml = '<div class="tool-section-label">Input</div>' +
+        '<div class="tool-section">' + escHtml(tc.args) + '</div>';
+
+      if (g.result) {
+        bodyHtml += '<div class="tool-section-label">Output</div>' +
+          '<div class="tool-section result">' + escHtml(truncateResult(g.result.content)) + '</div>';
+      }
+
+      return '<div class="tool-group">' +
+        '<button class="tool-header" onclick="this.parentElement.classList.toggle(\\\'open\\\')">' +
+          CHEVRON +
+          '<div class="tool-icon ' + iconCls + '">' + iconLetter + '</div>' +
+          '<span class="tool-name">' + escHtml(tc.name) + '</span>' +
+          (summary ? '<span class="tool-summary">' + escHtml(summary) + '</span>' : '') +
+        '</button>' +
+        '<div class="tool-body">' + bodyHtml + '</div>' +
+      '</div>';
+    }
+
+    function truncateResult(content) {
+      const maxLen = 5000;
+      if (content.length <= maxLen) return content;
+      return content.substring(0, maxLen) + '\\n\\n... (' + (content.length - maxLen).toLocaleString() + ' characters truncated)';
+    }
+
     async function refresh() {
       try {
-        const res = await fetch('/api/v1/${esc(identifier)}/log');
+        const res = await fetch('/api/v1/' + IDENTIFIER + '/log');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const entries = await res.json();
-        const el = document.getElementById('log');
+
+        document.getElementById('statusDot').classList.remove('disconnected');
+        document.getElementById('statusText').textContent = entries.length + ' entries';
+
+        const conv = document.getElementById('conv');
+
         if (entries.length === 0) {
-          el.innerHTML = '<p class="empty">No log entries yet</p>';
+          conv.innerHTML = '<div class="empty-state"><div class="spinner"></div>Waiting for activity...</div>';
+          prevCount = 0;
           return;
         }
-        el.innerHTML = entries.map(e =>
-          '<div class="entry ' + e.type + '">' +
-            '<span class="ts">' + new Date(e.timestamp).toLocaleTimeString() + '</span> ' +
-            '<span class="tag">[' + e.type.toUpperCase() + ']</span>' +
-            escHtml(e.content) +
-          '</div>'
-        ).join('');
-        el.scrollTop = el.scrollHeight;
+
+        // Only re-render if new entries arrived
+        if (entries.length !== prevCount) {
+          const groups = groupEntries(entries);
+          conv.innerHTML = renderGroups(groups);
+          prevCount = entries.length;
+
+          if (!userScrolled) {
+            requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+          }
+        }
       } catch (err) {
         console.error('Log refresh failed:', err);
+        document.getElementById('statusDot').classList.add('disconnected');
+        document.getElementById('statusText').textContent = 'Disconnected';
       }
     }
-    function escHtml(s) {
-      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
+
     refresh();
-    setInterval(refresh, 3000);
+    setInterval(refresh, 2000);
   </script>
 </body>
 </html>`;
